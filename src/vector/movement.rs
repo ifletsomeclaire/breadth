@@ -76,6 +76,25 @@ impl Movement {
             *p += *v * timestep;
         });
     }
+    pub fn to_raw(&self, raw_mats: &mut Vec<InstanceRaw>) {
+        for wide_pos in self.position.iter() {
+            let x: [f32; 8] = wide_pos[0].into();
+            let y: [f32; 8] = wide_pos[1].into();
+            let z: [f32; 8] = wide_pos[2].into();
+            for i in 0..8 {
+                raw_mats.push(InstanceRaw {
+                    model: cgmath::Matrix4::from_translation(cgmath::Vector3::from((
+                        x[i], y[i], z[i],
+                    ))),
+                });
+            }
+        }
+    }
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct InstanceRaw {
+    model: cgmath::Matrix4<f32>,
 }
 
 fn clear_index(wide_vec: &mut Vec3x8, index: usize) {

@@ -3,9 +3,8 @@ use std::iter;
 // use rayon::iter::*;
 
 use breadth::vector::movement::Index;
-use cgmath::prelude::*;
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
-use ultraviolet::{f32x8, Vec3, Vec3x8};
+use ultraviolet::{f32x8, projection::perspective_infinite_z_wgpu_dx, Mat4, Vec3, Vec3x8, Vec4};
 use wgpu::util::DeviceExt;
 use winit::{
     event::*,
@@ -16,7 +15,7 @@ use winit::{
 mod texture;
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
-const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
+const INSTANCE_DISPLACEMENT: Vec3 = Vec3::new(
     NUM_INSTANCES_PER_ROW as f32 * 0.5,
     0.0,
     NUM_INSTANCES_PER_ROW as f32 * 0.5,
@@ -79,18 +78,10 @@ const VERTICES: &[Vertex] = &[
 
 const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
 
-#[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 0.5, 0.0,
-    0.0, 0.0, 0.5, 1.0,
-);
-
 struct Camera {
-    eye: cgmath::Point3<f32>,
-    target: cgmath::Point3<f32>,
-    up: cgmath::Vector3<f32>,
+    eye: Vec3,
+    target: Vec3,
+    up: Vec3,
     aspect: f32,
     fovy: f32,
     znear: f32,
@@ -98,9 +89,9 @@ struct Camera {
 }
 
 impl Camera {
-    fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
-        let view = cgmath::Matrix4::look_at(self.eye, self.target, self.up);
-        let proj = cgmath::perspective(cgmath::Deg(self.fovy), self.aspect, self.znear, self.zfar);
+    fn build_view_projection_matrix(&self) -> Mat4 {
+        let view = Mat4::look_at(self.eye, self.target, self.up);
+        let proj = perspective_infinite_z_wgpu_dx(self.fovy, self.aspect, self.znear);
         proj * view
     }
 }
@@ -108,7 +99,7 @@ impl Camera {
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct Uniforms {
-    view_proj: cgmath::Matrix4<f32>,
+    view_proj: Mat4,
 }
 
 unsafe impl bytemuck::Pod for Uniforms {}
@@ -117,12 +108,13 @@ unsafe impl bytemuck::Zeroable for Uniforms {}
 impl Uniforms {
     fn new() -> Self {
         Self {
-            view_proj: cgmath::Matrix4::identity(),
+            view_proj: Mat4::identity(),
         }
     }
 
     fn update_view_proj(&mut self, camera: &Camera) {
-        self.view_proj = OPENGL_TO_WGPU_MATRIX * camera.build_view_projection_matrix();
+        // self.view_proj = OPENGL_TO_WGPU_MATRIX * camera.build_view_projection_matrix();
+        self.view_proj = camera.build_view_projection_matrix();
     }
 }
 
@@ -194,7 +186,8 @@ impl CameraController {
     }
 
     fn update_camera(&self, camera: &mut Camera) {
-        let forward = (camera.target - camera.eye).normalize();
+        let mut forward: Vec3 = camera.target - camera.eye;
+        forward.normalize();
 
         if self.is_forward_pressed {
             camera.eye += forward * self.speed;
@@ -215,18 +208,16 @@ impl CameraController {
 }
 
 struct Instance {
-    position: cgmath::Vector3<f32>,
-    rotation: cgmath::Quaternion<f32>,
+    position: Vec3,
 }
 
-impl Instance {
-    fn to_raw(&self) -> InstanceRaw {
-        InstanceRaw {
-            model: cgmath::Matrix4::from_translation(self.position)
-                * cgmath::Matrix4::from(self.rotation),
-        }
-    }
-}
+// impl Instance {
+//     fn to_raw(&self) -> InstanceRaw {
+//         InstanceRaw {
+//             model: Mat4::from_translation(self.position),
+//         }
+//     }
+// }
 
 #[derive(Debug, Default)]
 struct WideInstance {
@@ -287,9 +278,7 @@ impl WideInstance {
             let z: [f32; 8] = wide_pos[2].into();
             for i in 0..8 {
                 raw_mats.push(InstanceRaw {
-                    model: cgmath::Matrix4::from_translation(cgmath::Vector3::from((
-                        x[i], y[i], z[i],
-                    ))),
+                    model: Mat4::from_translation(Vec3::from((x[i], y[i], z[i]))),
                 });
             }
         }
@@ -300,7 +289,7 @@ impl WideInstance {
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct InstanceRaw {
-    model: cgmath::Matrix4<f32>,
+    model: Mat4,
 }
 
 unsafe impl bytemuck::Pod for InstanceRaw {}
@@ -412,7 +401,7 @@ impl State {
         let camera = Camera {
             eye: (0.0, 5.0, 10.0).into(),
             target: (0.0, 0.0, 0.0).into(),
-            up: cgmath::Vector3::unit_y(),
+            up: Vec3::unit_y(),
             aspect: sc_desc.width as f32 / sc_desc.height as f32,
             fovy: 45.0,
             znear: 0.1,
@@ -432,27 +421,12 @@ impl State {
         let instances = (0..NUM_INSTANCES_PER_ROW)
             .flat_map(|z| {
                 (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                    let position = cgmath::Vector3 {
+                    let position = Vec3 {
                         x: x as f32,
                         y: 0.0,
                         z: z as f32,
                     } - INSTANCE_DISPLACEMENT;
-
-                    let rotation = if position.is_zero() {
-                        // this is needed so an object at (0, 0, 0) won't get scaled to zero
-                        // as Quaternions can effect scale if they're not created correctly
-                        cgmath::Quaternion::from_axis_angle(
-                            cgmath::Vector3::unit_z(),
-                            cgmath::Deg(0.0),
-                        )
-                    } else {
-                        cgmath::Quaternion::from_axis_angle(
-                            position.clone().normalize(),
-                            cgmath::Deg(45.0),
-                        )
-                    };
-
-                    Instance { position, rotation }
+                    Instance { position }
                 })
             })
             .collect::<Vec<_>>();

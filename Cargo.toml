@@ -11,6 +11,8 @@ ultraviolet = "*"
 rayon = "*"
 rand = "*"
 anyhow = "*"
+cgmath = "0.17"
+
 
 
 [dev-dependencies]
