@@ -11,12 +11,9 @@ ultraviolet = "*"
 rayon = "*"
 rand = "*"
 anyhow = "*"
-cgmath = "0.17"
-
 
 
 [dev-dependencies]
-cgmath = "0.17"
 log = "0.4"
 png = "0.16"
 winit = { version = "0.22.1", features = ["web-sys"] }
