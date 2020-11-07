@@ -77,10 +77,10 @@ impl Movement {
             .zip(&mut self.velocity)
             .zip(&mut self.accel)
             .for_each(|((p, v), a)| {
-                p.transform_vec3(*v * timestep);
+                p.translate(&(*v * timestep));
             });
     }
-    fn to_raw(&self) -> Vec<InstanceRaw> {
+    pub fn to_raw(&self) -> Vec<InstanceRaw> {
         let mut raw_mats = Vec::new();
         for wide_pos in self.transform.iter() {
             let c0: [f32x8; 4] = wide_pos[0].into();
@@ -124,8 +124,11 @@ impl Movement {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct InstanceRaw {
-    model: Mat4,
+    pub model: Mat4,
 }
+
+unsafe impl bytemuck::Pod for InstanceRaw {}
+unsafe impl bytemuck::Zeroable for InstanceRaw {}
 
 fn clear_index(wide_vec: &mut Vec3x8, index: usize) {
     let mut x: [f32; 8] = [1.0; 8];
